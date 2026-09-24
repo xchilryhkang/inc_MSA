@@ -18,8 +18,8 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from torch.utils.data.distributed import DistributedSampler
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
-from transformers import BertConfig, BertTokenizer, XLNetTokenizer, get_cosine_schedule_with_warmup
-from transformers.optimization import AdamW
+from transformers import BertConfig, BertTokenizer
+from torch.optim import AdamW
 from itertools import chain
 from IIE_model import IIEModel
 import warnings
@@ -267,7 +267,7 @@ def set_random_seed(seed: int):
 def prep_for_training(num_train_optimization_steps: int):
     if args.model == "bert-base-uncased":
         model = IIEModel.from_pretrained(
-            './BERT_EN/', num_labels=1, args = args,
+            './BERT_EN/', num_labels=1, args = args, low_cpu_mem_usage=False,
         )
 
     total_para = 0
@@ -277,6 +277,25 @@ def prep_for_training(num_train_optimization_steps: int):
     
     if args.load:
         model.load_state_dict(torch.load(args.model_path))
+
+    # transformers>=4.5x builds params absent from the checkpoint (Conv1d and the
+    # custom modules) on uninitialized memory -> NaN. Re-initialize any non-finite param.
+    import torch.nn as _nn
+    for _mod in model.modules():
+        if isinstance(_mod, (_nn.Conv1d, _nn.Conv2d, _nn.Linear)):
+            if _mod.weight is not None and not torch.isfinite(_mod.weight).all():
+                _nn.init.xavier_uniform_(_mod.weight)
+            if getattr(_mod, 'bias', None) is not None and not torch.isfinite(_mod.bias).all():
+                _nn.init.zeros_(_mod.bias)
+        elif isinstance(_mod, _nn.LayerNorm):
+            if _mod.weight is not None and not torch.isfinite(_mod.weight).all():
+                _nn.init.ones_(_mod.weight)
+            if _mod.bias is not None and not torch.isfinite(_mod.bias).all():
+                _nn.init.zeros_(_mod.bias)
+    for _name, _param in model.named_parameters():
+        if not torch.isfinite(_param).all():
+            with torch.no_grad():
+                _param.normal_(0.0, 0.02)
 
     model.to(DEVICE)
 
@@ -358,6 +377,8 @@ parser.add_argument('--clip', type=float, default=0.8,
 parser.add_argument('--lr_decrease', type=str, default='cos', help='the methods of learning rate decay')
 parser.add_argument('--lr_warmup', type=int, default=1)
 parser.add_argument('--weight_decay', type=float, default=5e-4)
+parser.add_argument('--alignment', type=str, default='align',
+                    help='use aligned features (aligned MOSI/MOSEI pkl)')
 
 
 args = parser.parse_args()
@@ -664,5 +685,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

@@ -22,7 +22,10 @@ from functools import wraps
 import os
 from transformers import BertPreTrainedModel
 from transformers.models.bert.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
-from transformers.activations import gelu, gelu_new
+try:
+    from transformers.activations import gelu, gelu_new  # removed in newer transformers
+except Exception:
+    gelu = gelu_new = None
 from transformers import BertConfig
 import numpy as np
 import torch.optim as optim
@@ -460,4 +463,3 @@ class IIEModel(BertPreTrainedModel):
                 "hidden": hidden,   
         }
         return res
-
